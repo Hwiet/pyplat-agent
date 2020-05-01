@@ -5,9 +5,13 @@ import time
 import os
 import pygame
 import math
-import queue
+from queue import Queue
+from enum import Enum
+import heapq
 import numpy
 
+ROW_COUNT = 12
+COL_COUNT = 20
 
 class Agent(threading.Thread):
 
@@ -35,182 +39,210 @@ class Agent(threading.Thread):
     #      YOUR SUPER COOL ARTIFICIAL INTELLIGENCE HERE!!!      #
     #############################################################
 
-        self.has_path = False
-        self.curr_path = None
+        self.path = []
 
     def ai_function(self):
-        def find_goals(grid):
-            row_count = numpy.size(self.move_grid, 0)
-            col_count = numpy.size(self.move_grid, 1)
-            goals = []
-            for row in range(row_count):
-                for col in range(col_count):
-                    if self.move_grid[row][col] == "#" or self.move_grid[row][col] == "a" or self.move_grid[row]:
-                        goals.append((row, col))
-            return goals
+        Dir = Enum('Dir', 'UP DOWN LEFT RIGHT')
+
+        class PriorityQueue():
+            """A barebones queue prioritizing minimum values (minimum according to function 'func')."""
+
+            def __init__(self, func=lambda x: x):
+                self.heap = []
+                self.func = func
+
+            def push(self, item):
+                """Push an item into the correct position."""
+                heapq.heappush(self.heap, (self.func(item), item))
+
+            def pop(self):
+                """Pop and return the smallest item in the queue."""
+                if self.heap:
+                    return heapq.heappop(self.heap)[1]
+                else:
+                    return None
+
+            def is_empty(self):
+                return not bool(len(self.heap))
+
+            def __len__(self):
+                """Return current capacity of PriorityQueue."""
+                return len(self.heap)
+
+            def __contains__(self, key):
+                """Return True if the key is in PriorityQueue."""
+                return any([item == key for _, item in self.heap])
+
+            def __getitem__(self, key):
+                """Returns the first value associated with key in PriorityQueue.
+                Raises KeyError if key is not present."""
+                for value, item in self.heap:
+                    if item == key:
+                        return value
+                raise KeyError(str(key) + " is not in the priority queue")
+
+            def __delitem__(self, key):
+                """Delete the first occurrence of key."""
+                try:
+                    del self.heap[[item == key for _, item in self.heap].index(True)]
+                except ValueError:
+                    raise KeyError(str(key) + " is not in the priority queue")
+                heapq.heapify(self.heap)
 
 
-        def heuristic(curr_row, curr_col, goal_row, goal_col):
-            return math.sqrt((curr_row - goal_row) ** 2 + (curr_col - goal_col) ** 2)
+        def heuristic(row1, col1, row2, col2):
+            return math.sqrt((row1 - row2) ** 2 + (col1 - col2) ** 2)
+   
 
-        def a_star(move_grid, cur_r, cur_c, target):
-            row_count = numpy.size(move_grid, 0)
-            col_count = numpy.size(move_grid, 1)
+        def within_bounds(row, col):
+            """Determine whether the coordinates are within the bounds of the grid."""
+            return 0 <= row < ROW_COUNT and 0 <= col < COL_COUNT
 
-            visited = numpy.zeros_like(move_grid)
-            parent = numpy.zeros_like(move_grid)
 
-            dist_so_far = 0
-            path_to_goal = None
-            distance_to_goal = 0
+        def is_goal(row, col, terminals=[8, 9, 10]):
+                return self.move_grid[row][col] in terminals
 
-            this_queue = queue.Queue()
-            this_queue_item = None
-            this_r = cur_r
-            this_c = cur_c
-            path_exists = False
-            i = 0
+        def astar_search(row, col):
+            class Node():
+                """Encapsulate info about a node of an A* search tree."""
+                def __init__(self, row, col, path_cost=0, parent=None):
+                    self.row = row
+                    self.col = col
+                    self.path_cost = path_cost
+                    self.parent = parent
 
-            visited[this_r][this_c] = 1
-            this_queue.put((this_r, this_c))
+                def __lt__(self, node):
+                    """Required to define '<' operator between two nodes in priority queue."""
+                    return self.row + self.col < node.row + node.col
 
-            while not this_queue.empty():
-                this_queue_item = this_queue.get()
-                this_r = this_queue_item[0]
-                this_c = this_queue_item[1]
-                # print(f"({this_r:02d},{this_c:02d}) = {move_grid[this_r][this_c]:d}")
+            def seek_node(cur_node, direction):
+                cur_row = cur_node.row
+                cur_col = cur_node.col
+                new_path_cost = 0
+                if direction == Dir.UP:
+                    if self.move_grid[cur_row][cur_col] != 6:
+                        return None # abort, no node exists in this direction
+                    while not is_goal(cur_row, cur_col) and self.move_grid[cur_row][cur_col] == 6:
+                        if not within_bounds(cur_row-1, cur_col):
+                            return None # abort, no node exists in this direction
+                        cur_row -= 1
+                    new_path_cost = cur_node.path_cost + abs(cur_node.row - cur_row)
+                elif direction == Dir.DOWN:
+                    if not within_bounds(cur_row+1, cur_col):
+                        return None # abort, no node exists in this direction
+                    elif self.move_grid[cur_row+1][cur_col] != 6:
+                        return None # abort, no node exists in this direction
+                    while not is_goal(cur_row, cur_col) and self.game.floor_below_me(cur_row+1, cur_col):
+                        if not within_bounds(cur_row+1, cur_col):
+                            return None # abort, no node exists in this direction
+                        cur_row += 1
+                    new_path_cost = cur_node.path_cost + abs(cur_node.row - cur_row)
+                elif direction == Dir.LEFT:
+                    while (not is_goal(cur_row, cur_col) and
+                        # stop if at bottom of a ladder, which is a node
+                        (not self.move_grid[cur_row][cur_col] == 6 or
+                        # stop if at top of a ladder, which is a node
+                        not self.game.floor_below_me(cur_row+1, cur_col) or
+                        # can go left if there is a floor to the left
+                        self.game.floor_below_me(cur_row, cur_col-1) or
+                        # can go left if there is no floor in the left cell but the left cell has floors on both sides
+                        (not self.game.floor_below_me(cur_row, cur_col-1) and self.game.floor_below_me(cur_row, cur_col) and self.game.floor_below_me(cur_row, cur_col-2)))):
 
-                # if current cell is the target
-                if move_grid[this_r][this_c] == target:
-                    path_exists = True
+                        #print(f"({cur_row}, {cur_col}), is goal: {is_goal(cur_row, cur_col)}")
+                        if not within_bounds(cur_row, cur_col-1) or self.move_grid[cur_row][cur_col-1] == 7:
+                            #print(not within_bounds(cur_row, cur_col-1))
+                            #print("None found")
+                            return None # abort, no node exists in this direction
+                        cur_col -= 1
+                    new_path_cost = cur_node.path_cost + abs(cur_node.col - cur_col)
+                elif direction == Dir.RIGHT:
+                    while (not is_goal(cur_row, cur_col) and
+                        # stop if at bottom of a ladder, which is a node
+                        (not self.move_grid[cur_row][cur_col] == 6 or
+                        # stop if at top of a ladder, which is a node
+                        not self.game.floor_below_me(cur_row+1, cur_col) or
+                        # can go right if there is a floor to the right
+                        self.game.floor_below_me(cur_row, cur_col+1) or
+                        # can go right if there is no floor in the right cell but the left cell has floors on both sides
+                        (not self.game.floor_below_me(cur_row, cur_col+1) and self.game.floor_below_me(cur_row, cur_col) and self.game.floor_below_me(cur_row, cur_col+2)))):
+                        print(f"{not is_goal(cur_row, cur_col)}, {not self.move_grid[cur_row][cur_col] == 6}")
+                        if not within_bounds(cur_row, cur_col+1) or self.move_grid[cur_row][cur_col+1] == 7:
+                            return None # abort, no node exists in this direction
+                        cur_col += 1
+                    new_path_cost = cur_node.path_cost + abs(cur_node.col - cur_col)
+                else:
+                    return None
+
+                return Node(cur_row, cur_col, new_path_cost, cur_node)
+
+            def expand(cur_node):
+                """Branch out from the current position and identify 'nodes'.
+                Nodes are located at either on goal objects or cells in the graph that have branches, such as at the two ends of a ladder."""
+                nodes = []
+                for direction in Dir:
+                    print(f"{direction}: ", end="")
+                    new_node = seek_node(cur_node, direction)
+                    if new_node is not None:
+                        print(f"({new_node.row}, {new_node.col})", end="")
+                        nodes.append(new_node)
+                return nodes
+
+            def eval(node):
+                """The A* evaluation function, which is f(n) = h(n) + g(n)"""
+                return node.path_cost + heuristic(row, col, node.row, node.col)
+
+            node = Node(row, col)
+            frontier = PriorityQueue(eval)
+            frontier.push(node)
+            explored = set()
+            path = []
+
+            # perform A* search
+            while frontier:
+                node = frontier.pop()
+                if is_goal(node.row, node.col):
                     break
+                explored.add(node)
+                for child in expand(node):
+                    if child not in explored and child not in frontier:
+                        frontier.push(child)
+                    elif child in frontier:
+                        if eval(child) < frontier[child]:
+                            del frontier[child]
+                            frontier.push(child)
 
-                # if current cell = 0
-                elif move_grid[this_r][this_c] == 0:
+            # backtrack
+            while node.parent is not None:
+                if node.row == node.parent.row:
+                    if node.col < node.parent.col:
+                        for i in range(abs(node.col - node.parent.col)):
+                            path.append(arcade.key.LEFT)
+                    else:
+                        for i in range(abs(node.col - node.parent.col)):
+                            path.append(arcade.key.RIGHT)
+                elif node.col == node.parent.col:
+                    if node.row < node.parent.row:
+                        for i in range(abs(node.row - node.parent.row)):
+                            path.append(arcade.key.UP)
+                    else:
+                        for i in range(abs(node.row - node.parent.row)):
+                            path.append(arcade.key.DOWN)
+                node = node.parent
+                
+            return path
+        
+        next_move = None
+        if self.path == []:
+            if is_goal(self.tanuki_r, self.tanuki_c):
+                # tanuki got a target/bonus! now we have to mark the cell empty
+                self.move_grid[self.tanuki_r][self.tanuki_c] = 1
+            self.path = astar_search(self.tanuki_r, self.tanuki_c)
+            print("NEW PATH")
 
-                    # queue left cell
-                    if (this_c > 0 and visited[this_r][this_c - 1] == 0 and
-                            allowed_cell(move_grid, this_r, this_c - 1)):
-                        visited[this_r][this_c - 1] = 1
-                        parent[this_r][this_c - 1] = 2
-                        this_queue.put((this_r, this_c - 1))
+        next_move = self.path.pop()
+        self.game.on_key_press(next_move, None)
 
-                # if current cell = 1
-                elif move_grid[this_r][this_c] == 1:
-
-                    # queue some cells only if cell below is 4 or 6
-                    if (this_r < numpy.size(move_grid, 0) - 1 and
-                            (move_grid[this_r + 1][this_c] == 4 or move_grid[this_r + 1][this_c] == 6)):
-
-                        # queue left cell
-                        if (this_c > 0 and visited[this_r][this_c - 1] == 0 and
-                                allowed_cell(move_grid, this_r, this_c - 1)):
-                            visited[this_r][this_c - 1] = 1
-                            parent[this_r][this_c - 1] = 2
-                            this_queue.put((this_r, this_c - 1))
-
-                        # queue right cell
-                        if (this_c < numpy.size(move_grid, 1) - 1 and visited[this_r][this_c + 1] == 0 and
-                                allowed_cell(move_grid, this_r, this_c + 1)):
-                            visited[this_r][this_c + 1] = 1
-                            parent[this_r][this_c + 1] = 4
-                            this_queue.put((this_r, this_c + 1))
-
-                        # queue cell below if it is 6
-                        if visited[this_r + 1][this_c] == 0 and move_grid[this_r + 1][this_c] == 6:
-                            visited[this_r + 1][this_c] = 1
-                            parent[this_r + 1][this_c] = 1
-                            this_queue.put((this_r + 1, this_c))
-
-                # if current cell = 6
-                elif move_grid[this_r][this_c] == 6:
-
-                    # queue cell above
-                    if (this_r > 0 and visited[this_r - 1][this_c] == 0 and
-                            allowed_cell(move_grid, this_r - 1, this_c)):
-                        visited[this_r - 1][this_c] = 1
-                        parent[this_r - 1][this_c] = 3
-                        this_queue.put((this_r - 1, this_c))
-
-                    if this_r < numpy.size(move_grid, 0) - 1:
-
-                        # queue cell below
-                        if (visited[this_r + 1][this_c] == 0 and
-                                allowed_cell(move_grid, this_r + 1, this_c)):
-                            visited[this_r + 1][this_c] = 1
-                            parent[this_r + 1][this_c] = 1
-                            this_queue.put((this_r + 1, this_c))
-
-                        # queue left and right cells also if cell below = 4
-                        if move_grid[this_r + 1][this_c] == 4:
-
-                            if (this_c > 0 and visited[this_r][this_c - 1] == 0 and
-                                    allowed_cell(move_grid, this_r, this_c - 1)):
-                                visited[this_r][this_c - 1] = 1
-                                parent[this_r][this_c - 1] = 2
-                                this_queue.put((this_r, this_c - 1))
-
-                            if (this_c < numpy.size(move_grid, 1) - 1 and visited[this_r][this_c + 1] == 0 and
-                                    allowed_cell(move_grid, this_r, this_c + 1)):
-                                visited[this_r][this_c + 1] = 1
-                                parent[this_r][this_c + 1] = 4
-                                this_queue.put((this_r, this_c + 1))
-
-            # begin backtrack
-            if path_exists:
-                while this_r != cur_r or this_c != cur_c:
-                    path_to_goal.insert(0, (this_r, this_c))
-                    distance_to_goal += 1
-
-                    if parent[this_r][this_c] == 1:
-                        this_r -= 1
-                    elif parent[this_r][this_c] == 2:
-                        this_c += 1
-                    elif parent[this_r][this_c] == 3:
-                        this_r += 1
-                    elif parent[this_r][this_c] == 4:
-                        this_c -= 1
-
-                path_to_goal.insert(0, (this_r, this_c))
-
-            return (path_to_goal, distance_to_goal)
-
-        def allowed_cell(move_grid, this_r, this_c):
-            unallowed = {0, 4}
-
-            for unallowed_cell in unallowed:
-                if move_grid[this_r][this_c] == unallowed_cell:
-                    return False
-            return True
-
-        def check_for_safety():
-            # check for enemies, gap, ladder, spikes...
-            pass
-            return
-
-        """if (not self.has_path):
-            this_goal_dist = 0
-            this_goal_path = None
-            closest_goal_dist = 0
-            closest_goal_path = None
-            
-            for goal in find_goals(self.move_grid):
-                this_goal_path, this_goal_dist = a_star(self.move_grid, self.tanuki_r, self.tanuki_c, goal)
-                if (this_goal_dist < closest_goal_dist):
-                    closest_goal_dist = this_goal_dist
-                    closest_goal_path = this_goal_path
-
-            curr_path = closest_goal_path
-            print(curr_path)
-
-        else:
-            # move.
-            # To send a key stroke to the game, use self.game.on_key_press() method
-            if self.move_grid[self.tanuki_r][self.tanuki_c] == 6:
-                self.game.on_key_press(arcade.key.UP, None)
-            else:
-                self.game.on_key_press(arcade.key.LEFT, None)"""
-        return
+        return 
 
     def run(self):
         print("Starting " + self.name)
@@ -273,7 +305,7 @@ class Agent(threading.Thread):
 
 
 def main():
-    ag = Agent(1, "My Agent", 1, True)
+    ag = Agent(1, "My Agent", 1, False)
     ag.start()
 
     ag.game = game_core.GameMain()
