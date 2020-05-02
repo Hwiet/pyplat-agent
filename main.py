@@ -40,6 +40,7 @@ class Agent(threading.Thread):
     #############################################################
 
         self.path = []
+        self.prev_move = None
 
     def ai_function(self):
         Dir = Enum('Dir', 'UP DOWN LEFT RIGHT')
@@ -100,7 +101,7 @@ class Agent(threading.Thread):
 
 
         def is_goal(row, col, terminals=[8, 9, 10]):
-                return self.move_grid[row][col] in terminals
+            return self.move_grid[row][col] in terminals
 
         def astar_search(row, col):
             class Node():
@@ -112,8 +113,24 @@ class Agent(threading.Thread):
                     self.parent = parent
 
                 def __lt__(self, node):
-                    """Required to define '<' operator between two nodes in priority queue."""
+                    # Required to define '<' operator between two nodes in priority queue.
                     return self.row + self.col < node.row + node.col
+
+                def __eq__(self, other):
+                    # Two nodes are considered to be equal if they have the same coordinates.
+                    return isinstance(other, Node) and self.row == other.row and self.col == other.col
+
+                def __hash__(self):
+                    # hash the coordinate stored in the node instead of the node object itself to quickly search a node with the same state
+                    return hash((self.row, self.col))
+
+            def at_node(row, col):
+                return (is_goal(row, col) or
+                    # target
+                    self.move_grid[row][col] == 6 or
+                    # bottom of a ladder
+                    (self.move_grid[row+1][col] == 6 and (self.move_grid[row][col] == 1 or is_goal(row, col))))
+                    # top of a ladder
 
             def seek_node(cur_node, direction):
                 cur_row = cur_node.row
@@ -122,69 +139,60 @@ class Agent(threading.Thread):
                 if direction == Dir.UP:
                     if self.move_grid[cur_row][cur_col] != 6:
                         return None # abort, no node exists in this direction
-                    while not is_goal(cur_row, cur_col) and self.move_grid[cur_row][cur_col] == 6:
+                    while self.move_grid[cur_row][cur_col] == 6:   
                         if not within_bounds(cur_row-1, cur_col):
                             return None # abort, no node exists in this direction
                         cur_row -= 1
                     new_path_cost = cur_node.path_cost + abs(cur_node.row - cur_row)
                 elif direction == Dir.DOWN:
-                    if not within_bounds(cur_row+1, cur_col):
+                    if not within_bounds(cur_row+1, cur_col) or self.move_grid[cur_row+1][cur_col] != 6:
                         return None # abort, no node exists in this direction
-                    elif self.move_grid[cur_row+1][cur_col] != 6:
-                        return None # abort, no node exists in this direction
-                    while not is_goal(cur_row, cur_col) and self.game.floor_below_me(cur_row+1, cur_col):
+                    while self.move_grid[cur_row+1][cur_col] == 6:
                         if not within_bounds(cur_row+1, cur_col):
                             return None # abort, no node exists in this direction
                         cur_row += 1
                     new_path_cost = cur_node.path_cost + abs(cur_node.row - cur_row)
                 elif direction == Dir.LEFT:
-                    while (not is_goal(cur_row, cur_col) and
-                        # stop if at bottom of a ladder, which is a node
-                        (not self.move_grid[cur_row][cur_col] == 6 or
-                        # stop if at top of a ladder, which is a node
-                        not self.game.floor_below_me(cur_row+1, cur_col) or
+                    while (self.game.floor_below_me(cur_row, cur_col-1) or
                         # can go left if there is a floor to the left
-                        self.game.floor_below_me(cur_row, cur_col-1) or
-                        # can go left if there is no floor in the left cell but the left cell has floors on both sides
-                        (not self.game.floor_below_me(cur_row, cur_col-1) and self.game.floor_below_me(cur_row, cur_col) and self.game.floor_below_me(cur_row, cur_col-2)))):
+                        self.game.floor_below_me(cur_row, cur_col-2)):
+                        # can go left if there is no floor beneath the left cell but the left cell has floors on both sides
 
-                        #print(f"({cur_row}, {cur_col}), is goal: {is_goal(cur_row, cur_col)}")
-                        if not within_bounds(cur_row, cur_col-1) or self.move_grid[cur_row][cur_col-1] == 7:
-                            #print(not within_bounds(cur_row, cur_col-1))
-                            #print("None found")
+                        if not within_bounds(cur_row, cur_col-1): # or self.move_grid[cur_row][cur_col-1] == 7:
                             return None # abort, no node exists in this direction
                         cur_col -= 1
-                    new_path_cost = cur_node.path_cost + abs(cur_node.col - cur_col)
+                        if at_node(cur_row, cur_col):
+                            new_path_cost = cur_node.path_cost + abs(cur_node.col - cur_col)
+                            break
                 elif direction == Dir.RIGHT:
-                    while (not is_goal(cur_row, cur_col) and
-                        # stop if at bottom of a ladder, which is a node
-                        (not self.move_grid[cur_row][cur_col] == 6 or
-                        # stop if at top of a ladder, which is a node
-                        not self.game.floor_below_me(cur_row+1, cur_col) or
+                    while (self.game.floor_below_me(cur_row, cur_col+1) or
                         # can go right if there is a floor to the right
-                        self.game.floor_below_me(cur_row, cur_col+1) or
-                        # can go right if there is no floor in the right cell but the left cell has floors on both sides
-                        (not self.game.floor_below_me(cur_row, cur_col+1) and self.game.floor_below_me(cur_row, cur_col) and self.game.floor_below_me(cur_row, cur_col+2)))):
-                        print(f"{not is_goal(cur_row, cur_col)}, {not self.move_grid[cur_row][cur_col] == 6}")
-                        if not within_bounds(cur_row, cur_col+1) or self.move_grid[cur_row][cur_col+1] == 7:
+                        self.game.floor_below_me(cur_row, cur_col+2)):
+                        # can go right if there is no floor beneath the right cell but the left cell has floors on both sides
+
+                        if not within_bounds(cur_row, cur_col+1): # or self.move_grid[cur_row][cur_col+1] == 7:
                             return None # abort, no node exists in this direction
                         cur_col += 1
-                    new_path_cost = cur_node.path_cost + abs(cur_node.col - cur_col)
-                else:
-                    return None
+                        if at_node(cur_row, cur_col):
+                            new_path_cost = cur_node.path_cost + abs(cur_node.col - cur_col)
+                            break
 
-                return Node(cur_row, cur_col, new_path_cost, cur_node)
+                if new_path_cost != 0:
+                    return Node(cur_row, cur_col, new_path_cost, cur_node)
+                return None
 
             def expand(cur_node):
                 """Branch out from the current position and identify 'nodes'.
                 Nodes are located at either on goal objects or cells in the graph that have branches, such as at the two ends of a ladder."""
                 nodes = []
+                #print(f"({cur_node.row}, {cur_node.col}): ", end="")
                 for direction in Dir:
-                    print(f"{direction}: ", end="")
                     new_node = seek_node(cur_node, direction)
                     if new_node is not None:
-                        print(f"({new_node.row}, {new_node.col})", end="")
+                        #print(f"{direction} ", end="")
+                        #print(f"({new_node.row}, {new_node.col}) ", end="")
                         nodes.append(new_node)
+                #print("")
                 return nodes
 
             def eval(node):
@@ -192,6 +200,7 @@ class Agent(threading.Thread):
                 return node.path_cost + heuristic(row, col, node.row, node.col)
 
             node = Node(row, col)
+            goal = None
             frontier = PriorityQueue(eval)
             frontier.push(node)
             explored = set()
@@ -201,6 +210,7 @@ class Agent(threading.Thread):
             while frontier:
                 node = frontier.pop()
                 if is_goal(node.row, node.col):
+                    goal = node
                     break
                 explored.add(node)
                 for child in expand(node):
@@ -210,37 +220,54 @@ class Agent(threading.Thread):
                         if eval(child) < frontier[child]:
                             del frontier[child]
                             frontier.push(child)
+            
+            # DEGUG: print tanuki's next goal
+            print(f"{node.row}, {node.col}")
 
             # backtrack
             while node.parent is not None:
                 if node.row == node.parent.row:
                     if node.col < node.parent.col:
                         for i in range(abs(node.col - node.parent.col)):
-                            path.append(arcade.key.LEFT)
+                            path.append(Dir.LEFT)
                     else:
                         for i in range(abs(node.col - node.parent.col)):
-                            path.append(arcade.key.RIGHT)
+                            path.append(Dir.RIGHT)
                 elif node.col == node.parent.col:
                     if node.row < node.parent.row:
                         for i in range(abs(node.row - node.parent.row)):
-                            path.append(arcade.key.UP)
+                            path.append(Dir.UP)
                     else:
                         for i in range(abs(node.row - node.parent.row)):
-                            path.append(arcade.key.DOWN)
+                            path.append(Dir.DOWN)
                 node = node.parent
                 
-            return path
+            return (goal, path)
         
         next_move = None
         if self.path == []:
             if is_goal(self.tanuki_r, self.tanuki_c):
                 # tanuki got a target/bonus! now we have to mark the cell empty
                 self.move_grid[self.tanuki_r][self.tanuki_c] = 1
-            self.path = astar_search(self.tanuki_r, self.tanuki_c)
-            print("NEW PATH")
+            self.goal, self.path = astar_search(self.tanuki_r, self.tanuki_c)
 
         next_move = self.path.pop()
-        self.game.on_key_press(next_move, None)
+        if next_move is Dir.UP:
+            self.game.on_key_press(arcade.key.UP, None)
+        elif next_move is Dir.DOWN:
+            self.game.on_key_press(arcade.key.DOWN, None)
+        elif next_move is Dir.LEFT:
+            if self.move_grid[self.tanuki_r][self.tanuki_c-1] == 7 or not self.game.floor_below_me(self.tanuki_r, self.tanuki_c-1):
+                self.game.on_key_press(arcade.key.SPACE, None)
+            else:
+                self.game.on_key_press(arcade.key.LEFT, None)
+        elif next_move is Dir.RIGHT:
+            if self.move_grid[self.tanuki_r][self.tanuki_c+1] == 7 or not self.game.floor_below_me(self.tanuki_r, self.tanuki_c+1):
+                self.game.on_key_press(arcade.key.SPACE, None)
+            else:
+                self.game.on_key_press(arcade.key.RIGHT, None)
+
+        self.prev_move = next_move
 
         return 
 
@@ -305,7 +332,7 @@ class Agent(threading.Thread):
 
 
 def main():
-    ag = Agent(1, "My Agent", 1, False)
+    ag = Agent(1, "My Agent", 1, True)
     ag.start()
 
     ag.game = game_core.GameMain()
