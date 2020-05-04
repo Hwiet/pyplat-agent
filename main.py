@@ -13,6 +13,12 @@ import numpy
 ROW_COUNT = 12
 COL_COUNT = 20
 
+UP = 1
+DOWN = 2
+RIGHT = 3
+LEFT = 4
+SPACE = 5
+
 class Agent(threading.Thread):
 
     def __init__(self, threadID, name, counter, show_grid_info=True):
@@ -34,16 +40,87 @@ class Agent(threading.Thread):
         self.total_life = 0
         self.tanuki_r = 0
         self.tanuki_c = 0
+        self.previous_move = ''
+        self.previous_jump = True
 
     #############################################################
     #      YOUR SUPER COOL ARTIFICIAL INTELLIGENCE HERE!!!      #
     #############################################################
 
         self.path = []
-        self.prev_move = None
+        self.next_goal = None
+        self.searches = 0
+        #self.enemy_c_prev = [-1] * ROW_COUNT
 
     def ai_function(self):
-        Dir = Enum('Dir', 'UP DOWN LEFT RIGHT')
+        def euclid_dist(row1, col1, row2, col2):
+            return math.sqrt((row1 - row2) ** 2 + (col1 - col2) ** 2)
+
+
+        def within_bounds(row, col):
+            """Determine whether the coordinates are within the bounds of the grid."""
+            return 0 <= row < ROW_COUNT and 0 <= col < COL_COUNT
+
+
+        def occupiable(row, col):
+            return not (self.move_grid[row][col] == 7 and self.game.floor_below_me(row, col))
+
+
+        def is_goal(row, col, terminals=[8, 9, 10, 11]):
+            return self.move_grid[row][col] in terminals
+
+
+        def is_mid_ladder(row, col):
+            return self.move_grid[row][col] == 6 and not self.game.floor_below_me(row, col, True)
+
+
+        def is_enemy(row, col):
+            for enemy in self.game.enemy_list:
+                if enemy.gridR == row and enemy.gridC == col:
+                    return True
+            return False
+
+
+        def dist_enemy(row, col):
+            """Return tanuki's distance (a positive distance) from an enemy if it is in the
+            same row as tanuki. Return 999 if the current row is free of enemies."""
+            for enemy in self.game.enemy_list:
+                if enemy.gridR == row:
+                    return abs(col - enemy.gridC)
+            return 999
+
+
+        def is_enemy_coming(row, col):
+            """Determine if enemy is going toward or away from tanuki. Assumes that there
+            is a max of only one enemy per row."""
+            for enemy in self.game.enemy_list:
+                if enemy.gridR == row:
+                    return ((col <= enemy.gridC and enemy.isGoingLeft) or
+                        (enemy.gridC <= col and not enemy.isGoingLeft))
+            return False
+
+
+        class Node():
+            """Encapsulate info about a node of a search tree."""
+
+            def __init__(self, row, col, path_cost=0, parent=None):
+                self.row = row
+                self.col = col
+                self.path_cost = path_cost
+                self.parent = parent
+
+            def __lt__(self, node):
+                # Required to define '<' operator between two nodes in priority queue.
+                return self.row + self.col < node.row + node.col
+
+            def __eq__(self, other):
+                # Two nodes are considered to be equal if they have the same coordinates.
+                return isinstance(other, Node) and self.row == other.row and self.col == other.col
+
+            def __hash__(self):
+                # hash the coordinate stored in the node instead of the node object itself to quickly search a node with the same state
+                return hash((self.row, self.col))
+
 
         class PriorityQueue():
             """A barebones queue prioritizing minimum values (minimum according to function 'func')."""
@@ -91,86 +168,70 @@ class Agent(threading.Thread):
                 heapq.heapify(self.heap)
 
 
-        def heuristic(row1, col1, row2, col2):
-            return math.sqrt((row1 - row2) ** 2 + (col1 - col2) ** 2)
-   
-
-        def within_bounds(row, col):
-            """Determine whether the coordinates are within the bounds of the grid."""
-            return 0 <= row < ROW_COUNT and 0 <= col < COL_COUNT
-
-
-        def is_goal(row, col, terminals=[8, 9, 10]):
-            return self.move_grid[row][col] in terminals
-
-        def astar_search(row, col):
-            class Node():
-                """Encapsulate info about a node of an A* search tree."""
-                def __init__(self, row, col, path_cost=0, parent=None):
-                    self.row = row
-                    self.col = col
-                    self.path_cost = path_cost
-                    self.parent = parent
-
-                def __lt__(self, node):
-                    # Required to define '<' operator between two nodes in priority queue.
-                    return self.row + self.col < node.row + node.col
-
-                def __eq__(self, other):
-                    # Two nodes are considered to be equal if they have the same coordinates.
-                    return isinstance(other, Node) and self.row == other.row and self.col == other.col
-
-                def __hash__(self):
-                    # hash the coordinate stored in the node instead of the node object itself to quickly search a node with the same state
-                    return hash((self.row, self.col))
-
+        def best_first_recursive_search(row, col, eval, is_terminal):
             def at_node(row, col):
-                return (is_goal(row, col) or
+                return (is_terminal(row, col) or
                     # target
                     self.move_grid[row][col] == 6 or
                     # bottom of a ladder
-                    (self.move_grid[row+1][col] == 6 and (self.move_grid[row][col] == 1 or is_goal(row, col))))
+                    (self.move_grid[row+1][col] == 6 and (self.move_grid[row][col] == 1 or is_terminal(row, col))))
                     # top of a ladder
 
             def seek_node(cur_node, direction):
                 cur_row = cur_node.row
                 cur_col = cur_node.col
                 new_path_cost = 0
-                if direction == Dir.UP:
+                if direction == UP:
                     if self.move_grid[cur_row][cur_col] != 6:
                         return None # abort, no node exists in this direction
-                    while self.move_grid[cur_row][cur_col] == 6:   
-                        if not within_bounds(cur_row-1, cur_col):
+                    while self.move_grid[cur_row][cur_col] == 6:
+                        if (not within_bounds(cur_row-1, cur_col) or
+                            is_enemy(cur_row-1, cur_col)):
                             return None # abort, no node exists in this direction
                         cur_row -= 1
+                        if at_node(cur_row, cur_col):
+                            new_path_cost = cur_node.path_cost + abs(cur_node.col - cur_col)
+                            break
                     new_path_cost = cur_node.path_cost + abs(cur_node.row - cur_row)
-                elif direction == Dir.DOWN:
+                elif direction == DOWN:
                     if not within_bounds(cur_row+1, cur_col) or self.move_grid[cur_row+1][cur_col] != 6:
                         return None # abort, no node exists in this direction
                     while self.move_grid[cur_row+1][cur_col] == 6:
-                        if not within_bounds(cur_row+1, cur_col):
+                        if (not within_bounds(cur_row+1, cur_col) or
+                            is_enemy(cur_row+1, cur_col)):
                             return None # abort, no node exists in this direction
                         cur_row += 1
+                        if at_node(cur_row, cur_col):
+                            new_path_cost = cur_node.path_cost + abs(cur_node.col - cur_col)
+                            break
                     new_path_cost = cur_node.path_cost + abs(cur_node.row - cur_row)
-                elif direction == Dir.LEFT:
+                elif direction == LEFT:
                     while (self.game.floor_below_me(cur_row, cur_col-1) or
                         # can go left if there is a floor to the left
                         self.game.floor_below_me(cur_row, cur_col-2)):
                         # can go left if there is no floor beneath the left cell but the left cell has floors on both sides
-
-                        if not within_bounds(cur_row, cur_col-1): # or self.move_grid[cur_row][cur_col-1] == 7:
+                        try:
+                            if ((self.move_grid[cur_row][cur_col-1]==7 and not self.game.floor_below_me(cur_row, cur_col-2)) or
+                                (self.move_grid[cur_row][cur_col-2]==7 and not self.game.floor_below_me(cur_row, cur_col-1)) or
+                                (is_enemy(cur_row, cur_col-1))):
+                                return None
+                        except:
                             return None # abort, no node exists in this direction
                         cur_col -= 1
                         if at_node(cur_row, cur_col):
                             new_path_cost = cur_node.path_cost + abs(cur_node.col - cur_col)
                             break
-                elif direction == Dir.RIGHT:
+                elif direction == RIGHT:
                     while (self.game.floor_below_me(cur_row, cur_col+1) or
                         # can go right if there is a floor to the right
                         self.game.floor_below_me(cur_row, cur_col+2)):
                         # can go right if there is no floor beneath the right cell but the left cell has floors on both sides
-
-                        if not within_bounds(cur_row, cur_col+1): # or self.move_grid[cur_row][cur_col+1] == 7:
+                        try:
+                            if ((self.move_grid[cur_row][cur_col+1]==7 and not self.game.floor_below_me(cur_row, cur_col+2)) or
+                                (self.move_grid[cur_row][cur_col+2]==7 and not self.game.floor_below_me(cur_row, cur_col+1))
+                                (is_enemy(cur_row, cur_col+1))):
+                                return None
+                        except:
                             return None # abort, no node exists in this direction
                         cur_col += 1
                         if at_node(cur_row, cur_col):
@@ -185,19 +246,11 @@ class Agent(threading.Thread):
                 """Branch out from the current position and identify 'nodes'.
                 Nodes are located at either on goal objects or cells in the graph that have branches, such as at the two ends of a ladder."""
                 nodes = []
-                #print(f"({cur_node.row}, {cur_node.col}): ", end="")
-                for direction in Dir:
+                for direction in [UP, LEFT, RIGHT, DOWN]:
                     new_node = seek_node(cur_node, direction)
                     if new_node is not None:
-                        #print(f"{direction} ", end="")
-                        #print(f"({new_node.row}, {new_node.col}) ", end="")
                         nodes.append(new_node)
-                #print("")
                 return nodes
-
-            def eval(node):
-                """The A* evaluation function, which is f(n) = h(n) + g(n)"""
-                return node.path_cost + heuristic(row, col, node.row, node.col)
 
             node = Node(row, col)
             goal = None
@@ -209,7 +262,7 @@ class Agent(threading.Thread):
             # perform A* search
             while frontier:
                 node = frontier.pop()
-                if is_goal(node.row, node.col):
+                if is_terminal(node.row, node.col):
                     goal = node
                     break
                 explored.add(node)
@@ -220,56 +273,146 @@ class Agent(threading.Thread):
                         if eval(child) < frontier[child]:
                             del frontier[child]
                             frontier.push(child)
-            
-            # DEGUG: print tanuki's next goal
-            print(f"{node.row}, {node.col}")
 
             # backtrack
-            while node.parent is not None:
-                if node.row == node.parent.row:
-                    if node.col < node.parent.col:
-                        for i in range(abs(node.col - node.parent.col)):
-                            path.append(Dir.LEFT)
-                    else:
-                        for i in range(abs(node.col - node.parent.col)):
-                            path.append(Dir.RIGHT)
-                elif node.col == node.parent.col:
-                    if node.row < node.parent.row:
-                        for i in range(abs(node.row - node.parent.row)):
-                            path.append(Dir.UP)
-                    else:
-                        for i in range(abs(node.row - node.parent.row)):
-                            path.append(Dir.DOWN)
-                node = node.parent
-                
-            return (goal, path)
-        
-        next_move = None
-        if self.path == []:
-            if is_goal(self.tanuki_r, self.tanuki_c):
-                # tanuki got a target/bonus! now we have to mark the cell empty
-                self.move_grid[self.tanuki_r][self.tanuki_c] = 1
-            self.goal, self.path = astar_search(self.tanuki_r, self.tanuki_c)
+            if goal is None:
+                return None
+            else:
+                # DEBUG: print tanuki's next goal
+                print(f"target: {node.row}, {node.col}")
+                while node.parent is not None:
+                    if node.row == node.parent.row:
+                        if node.col < node.parent.col:
+                            for i in range(abs(node.col - node.parent.col)):
+                                path.append(LEFT)
+                        else:
+                            for i in range(abs(node.col - node.parent.col)):
+                                path.append(RIGHT)
+                    elif node.col == node.parent.col:
+                        if node.row < node.parent.row:
+                            for i in range(abs(node.row - node.parent.row)):
+                                path.append(UP)
+                        else:
+                            for i in range(abs(node.row - node.parent.row)):
+                                path.append(DOWN)
+                    node = node.parent
 
+            return (goal.row, goal.col, path)
+
+
+        def astar_search(row, col, is_terminal=is_goal, h=euclid_dist):
+            return best_first_recursive_search(row, col,
+                lambda node: is_terminal(node),
+                lambda node: node.path_cost + h(row, col, node.row, node.col))
+
+
+        astar = None
+        dist_ladder = 0
+        goal_r = 0
+        goal_c = 0
+        self.path = None
+
+        if is_goal(self.tanuki_r, self.tanuki_c):
+            # tanuki got a target/bonus! now we have to mark the cell empty
+            self.move_grid[self.tanuki_r][self.tanuki_c] = 1
+
+        if (self.time_limit < 1.5 or self.time_limit > 99.5 or
+            # pause on stage start and stage end
+            not self.game.floor_below_me(self.tanuki_r, self.tanuki_c)):
+            # don't do anything when in mid air
+            return
+
+        if is_mid_ladder(self.tanuki_r, self.tanuki_c):
+            if (self.previous_move == DOWN and
+                is_enemy_coming(self.tanuki_r+1, self.tanuki_c) and
+                dist_enemy(self.tanuki_r+1, self.tanuki_c) <= 10):
+                return # stall on the ladder
+            elif (self.previous_move == UP and
+                is_enemy_coming(self.tanuki_r-1, self.tanuki_c) and
+                dist_enemy(self.tanuki_r-1, self.tanuki_c) <= 10):
+                return # stall on the ladder
+
+        astar = astar_search(self.tanuki_r, self.tanuki_c, is_mid_ladder)
+        if astar is not None:
+            goal_r, goal_c, self.path = astar
+            dist_ladder = abs(goal_c - self.tanuki_c)
+
+        if not (is_enemy_coming(self.tanuki_r, self.tanuki_c) and
+            dist_enemy(self.tanuki_r, self.tanuki_c) <= 2 * dist_ladder + 1):
+            # if the enemy is not coming towards us
+            astar = astar_search(self.tanuki_r, self.tanuki_c)
+            if astar is not None:
+                goal_r, goal_c, self.path = astar
+
+        if not self.path:
+            return
+
+        if self.previous_move == None:
+            self.previous_move = LEFT
         next_move = self.path.pop()
-        if next_move is Dir.UP:
-            self.game.on_key_press(arcade.key.UP, None)
-        elif next_move is Dir.DOWN:
-            self.game.on_key_press(arcade.key.DOWN, None)
-        elif next_move is Dir.LEFT:
-            if self.move_grid[self.tanuki_r][self.tanuki_c-1] == 7 or not self.game.floor_below_me(self.tanuki_r, self.tanuki_c-1):
-                self.game.on_key_press(arcade.key.SPACE, None)
-            else:
-                self.game.on_key_press(arcade.key.LEFT, None)
-        elif next_move is Dir.RIGHT:
-            if self.move_grid[self.tanuki_r][self.tanuki_c+1] == 7 or not self.game.floor_below_me(self.tanuki_r, self.tanuki_c+1):
-                self.game.on_key_press(arcade.key.SPACE, None)
-            else:
-                self.game.on_key_press(arcade.key.RIGHT, None)
 
-        self.prev_move = next_move
+        if next_move is UP:
+            if self.previous_move != next_move:
+                if self.previous_move != DOWN:
+                    self.game.on_key_press(arcade.key.UP, None)
+                    self.game.on_key_press(arcade.key.UP, None)
+                    self.previous_jump = False
+            else:
+                self.game.on_key_press(arcade.key.UP, None)
+                self.previous_jump = False
+        elif next_move is DOWN:
+            if self.previous_move != next_move:
+                if self.previous_move != UP:
+                    self.game.on_key_press(arcade.key.DOWN, None)
+                    self.game.on_key_press(arcade.key.DOWN, None)
+                    self.previous_jump = False
+            else:
+                self.game.on_key_press(arcade.key.DOWN, None)
+                self.previous_jump = False
+        elif next_move is LEFT:
+            if not within_bounds(self.tanuki_r, self.tanuki_c-1):
+                return
+            if self.move_grid[self.tanuki_r][self.tanuki_c-1] == 7 or not self.game.floor_below_me(self.tanuki_r, self.tanuki_c-1) or is_enemy(self.tanuki_r, self.tanuki_c-1):
+                if self.previous_move == UP or self.previous_move == DOWN or self.previous_jump == True:
+                    self.game.on_key_press(arcade.key.LEFT, None)
+                    self.game.on_key_press(arcade.key.SPACE, None)
+                    self.previous_jump = True
+                    self.path.pop()
+                else:
+                    self.game.on_key_press(arcade.key.SPACE, None)
+                    self.previous_jump = True
+                    self.path.pop()
+            else:
+                if self.previous_move != next_move:
+                    self.game.on_key_press(arcade.key.LEFT, None)
+                    self.game.on_key_press(arcade.key.LEFT, None)
+                    self.previous_jump = False
+                else:
+                    self.game.on_key_press(arcade.key.LEFT, None)
+                    self.previous_jump = False
+        elif next_move is RIGHT:
+            if not within_bounds(self.tanuki_r, self.tanuki_c+1):
+                return
+            if self.move_grid[self.tanuki_r][self.tanuki_c+1] == 7 or not self.game.floor_below_me(self.tanuki_r, self.tanuki_c+1) or is_enemy(self.tanuki_r, self.tanuki_c+1):
+                if self.previous_move == UP or self.previous_move == DOWN or self.previous_jump == True:
+                    self.game.on_key_press(arcade.key.RIGHT, None)
+                    self.game.on_key_press(arcade.key.SPACE, None)
+                    self.previous_jump = True
+                    self.path.pop()
+                else:
+                    self.game.on_key_press(arcade.key.SPACE, None)
+                    self.previous_jump = True
+                    self.path.pop()
+            else:
+                if self.previous_move != next_move:
+                    self.game.on_key_press(arcade.key.RIGHT, None)
+                    self.game.on_key_press(arcade.key.RIGHT, None)
+                else:
+                    self.game.on_key_press(arcade.key.RIGHT, None)
+                    self.previous_jump = False
+        self.previous_move = next_move
 
-        return 
+        return
 
     def run(self):
         print("Starting " + self.name)
@@ -289,7 +432,7 @@ class Agent(threading.Thread):
             backscreen = pygame.Surface(backscreen_size)
             arr = pygame.PixelArray(backscreen)
         else:
-            time.sleep(0.5)  # wait briefly so that main game can get ready
+            time.sleep(1)  # wait briefly so that main game can get ready
 
         # roughly every 50 milliseconds, retrieve game state (average human response time for visual stimuli = 25 ms)
         go = True
@@ -326,7 +469,7 @@ class Agent(threading.Thread):
 
             # We must allow enough CPU time for the main game application
             # Polling interval can be reduced if you don't display the grid information
-            time.sleep(0.05)
+            time.sleep(0.25)
 
         print("Exiting " + self.name)
 
@@ -336,7 +479,7 @@ def main():
     ag.start()
 
     ag.game = game_core.GameMain()
-    ag.game.isDisableEnemy = True
+    ag.game.isDisableEnemy = False
     ag.game.set_location(50, 50)
 
     # Uncomment below for recording
