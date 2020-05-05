@@ -6,7 +6,7 @@ import os
 import pygame
 import math
 import heapq
-import numpy
+from igraph import Graph
 
 ROW_COUNT = 12
 COL_COUNT = 20
@@ -51,6 +51,12 @@ class Agent(threading.Thread):
         self.going_for_ladder = False
 
     def ai_function(self):
+        class GameNode():
+            # Temporarily packages info (row, column, and type) about a cell in a stage during graph
+            # traversal of the stage. See https://docs.python.org/3/tutorial/classes.html#odds-and-ends
+            # for this usage of a Python class.
+            pass
+
 
         class PriorityQueue():
             """A barebones queue prioritizing minimum values (minimum according to function 'func')."""
@@ -96,6 +102,75 @@ class Agent(threading.Thread):
                 except ValueError:
                     raise KeyError(str(key) + " is not in the priority queue")
                 heapq.heapify(self.heap)
+
+
+        def init_map(init_r, init_c):
+            """Initialize the graph representation of the current stage. The initial position has to be passed to define the entry point to use to populate the graph.
+
+            Args:
+                init_r (int): row of initial position
+                init_c (int): column of initial position
+            """
+            grid_graph = Graph()
+
+
+        def seek_gamenode(cur_node, direction):
+            cur_row = cur_node.row
+            cur_col = cur_node.col
+            new_gamenode = None
+            if direction == UP:
+                if self.move_grid[cur_row][cur_col] != 6:
+                    return None # abort, no node exists in this direction
+                while self.move_grid[cur_row][cur_col] == 6:
+                    if (not within_bounds(cur_row-1, cur_col):
+                        return None # abort, no node exists in this direction
+                    cur_row -= 1
+                    if at_node(cur_row, cur_col):
+                        break
+            elif direction == DOWN:
+                if not within_bounds(cur_row+1, cur_col) or self.move_grid[cur_row+1][cur_col] != 6:
+                    return None # abort, no node exists in this direction
+                while self.move_grid[cur_row+1][cur_col] == 6:
+                    if (not within_bounds(cur_row+1, cur_col):
+                        return None # abort, no node exists in this direction
+                    cur_row += 1
+                    if at_node(cur_row, cur_col):
+                        break
+            elif direction == LEFT:
+                while (self.game.floor_below_me(cur_row, cur_col-1) or
+                    # can go left if there is a floor to the left
+                    self.game.floor_below_me(cur_row, cur_col-2)):
+                    # can go left if there is no floor beneath the left cell but the left cell has floors on both sides
+                    try:
+                        if ((self.move_grid[cur_row][cur_col-1] == 7 and not self.game.floor_below_me(cur_row, cur_col-2)) or
+                            (self.move_grid[cur_row][cur_col-2] == 7 and not self.game.floor_below_me(cur_row, cur_col-1))):
+                            return None
+                    except:
+                        return None # abort, no node exists in this direction
+                    cur_col -= 1
+                    if at_node(cur_row, cur_col):
+                        break
+            elif direction == RIGHT:
+                while (self.game.floor_below_me(cur_row, cur_col+1) or
+                    # can go right if there is a floor to the right
+                    self.game.floor_below_me(cur_row, cur_col+2)):
+                    # can go right if there is no floor beneath the right cell but the left cell has floors on both sides
+                    try:
+                        if ((self.move_grid[cur_row][cur_col+1] == 7 and not self.game.floor_below_me(cur_row, cur_col+2)) or
+                            (self.move_grid[cur_row][cur_col+2] == 7 and not self.game.floor_below_me(cur_row, cur_col+1))):
+                            return None
+                    except:
+                        return None # abort, no node exists in this direction
+                    cur_col += 1
+                    if at_node(cur_row, cur_col):
+                        break
+
+            if new_path_cost != 0:
+                new_gamenode.row  = cur_row
+                new_gamenode.col  = cur_col
+                new_gamenode.type = self.move_grid[cur_row][cur_col]
+                return new_gamenode
+            return None
 
 
         def heuristic(row1, col1, row2, col2):
@@ -146,7 +221,7 @@ class Agent(threading.Thread):
 
 
         def astar_search(row, col, is_terminal=is_goal):
-            class Node():
+            class TreeNode():
                 """Encapsulate info about a node of an A* search tree."""
                 def __init__(self, row, col, path_cost=0, parent=None):
                     self.row = row
@@ -160,7 +235,7 @@ class Agent(threading.Thread):
 
                 def __eq__(self, other):
                     # Two nodes are considered to be equal if they have the same coordinates.
-                    return isinstance(other, Node) and self.row == other.row and self.col == other.col
+                    return isinstance(other, TreeNode) and self.row == other.row and self.col == other.col
 
                 def __hash__(self):
                     # hash the coordinate stored in the node instead of the node object itself to quickly search a node with the same state
@@ -236,7 +311,7 @@ class Agent(threading.Thread):
                             break
 
                 if new_path_cost != 0:
-                    return Node(cur_row, cur_col, new_path_cost, cur_node)
+                    return TreeNode(cur_row, cur_col, new_path_cost, cur_node)
                 return None
 
             def expand(cur_node):
@@ -253,7 +328,7 @@ class Agent(threading.Thread):
                 """The A* evaluation function, which is f(n) = h(n) + g(n)"""
                 return node.path_cost + heuristic(row, col, node.row, node.col)
 
-            node = Node(row, col)
+            node = TreeNode(row, col)
             goal = None
             frontier = PriorityQueue(eval)
             frontier.push(node)
