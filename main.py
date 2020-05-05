@@ -5,8 +5,6 @@ import time
 import os
 import pygame
 import math
-from queue import Queue
-from enum import Enum
 import heapq
 import numpy
 
@@ -279,11 +277,11 @@ class Agent(threading.Thread):
 
             if goal is None:
                 #print("target: None")
-                print(f"target not found. last node: {node.row}, {node.col}")
+                #print(f"target not found. last node: {node.row}, {node.col}")
                 return None
 
             # DEBUG: print tanuki's next goal
-            print(f"target: {node.row}, {node.col}")
+            #print(f"target: {node.row}, {node.col}")
 
             # backtrack
             while node.parent is not None:
@@ -326,44 +324,20 @@ class Agent(threading.Thread):
         if not self.game.floor_below_me(self.tanuki_r, self.tanuki_c):
             return # don't do anything when in mid air
 
-        """if is_mid_ladder(self.tanuki_r, self.tanuki_c):
-            if (self.previous_move == UP and
-                (dist_enemy(self.tanuki_r+1, self.tanuki_c) <= 3)):
-                return # stall on the ladder
-            if (self.previous_move == DOWN and
-                (dist_enemy(self.tanuki_r-1, self.tanuki_c) <= 3)):
-                return # stall on the ladder
-
         astar = astar_search(self.tanuki_r, self.tanuki_c, is_mid_ladder)
         if astar is not None:
             goal_r, goal_c, ladder_path = astar
             dist_ladder = abs(goal_c - self.tanuki_c)
 
         if (is_enemy_coming(self.tanuki_r, self.tanuki_c) and
-            dist_enemy(self.tanuki_r, self.tanuki_c) <= 8 and
+            dist_enemy(self.tanuki_r, self.tanuki_c) <= 2 * dist_ladder + 1 and
             ladder_path is not None):
-            self.path = ladder_path"""
-
-        #if is_enemy_coming(self.tanuki_r, self.tanuki_c):
-            # if the enemy coming towards here, check if it is close
-            #astar = astar_search(self.tanuki_r, self.tanuki_c, is_mid_ladder)
-            #if astar is not None:
-            #    goal_r, goal_c, ladder_path = astar
-            #    dist_ladder = abs(goal_c - self.tanuki_c)
-                #if (dist_enemy(self.tanuki_r, self.tanuki_c) <= 8) and ladder_path is not None:
-                    #self.path = ladder_path
-                    #self.going_for_ladder = True
-                    #print(self.path)
+            self.path = ladder_path
 
         if not self.path:
             astar = astar_search(self.tanuki_r, self.tanuki_c)
             if astar is not None:
                 goal_r, goal_c, self.path = astar
-
-        # don't do anything if for some reason A* star doesn't find a path
-
-        #print(f"path = {self.path}: ")
-        #print('location = ', self.tanuki_r, self.tanuki_c)
 
         #############################################################
         # Translate path to keystrokes                              #
@@ -373,8 +347,19 @@ class Agent(threading.Thread):
             self.previous_move = LEFT
 
         if not self.path:
+            # don't do anything if for some reason these is no path to follow
             print("No next move to follow.")
             return
+
+        if is_mid_ladder(self.tanuki_r, self.tanuki_c):
+            if (self.path[len(self.path)-1] == UP and
+                is_enemy_coming(self.tanuki_r-1, self.tanuki_c) and
+                dist_enemy(self.tanuki_r-1, self.tanuki_c) <= 1):
+                return # stall on the ladder
+            if (self.path[len(self.path)-1] == DOWN and
+                is_enemy_coming(self.tanuki_r+1, self.tanuki_c) and
+                dist_enemy(self.tanuki_r+1, self.tanuki_c) <= 1):
+                return # stall on the ladder
 
         next_move = self.path.pop()
 
@@ -498,7 +483,7 @@ def main():
     ag.start()
 
     ag.game = game_core.GameMain()
-    ag.game.isDisableEnemy = True
+    ag.game.isDisableEnemy = False
     ag.game.set_location(50, 50)
 
     # Uncomment below for recording
