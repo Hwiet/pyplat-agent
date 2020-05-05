@@ -123,7 +123,7 @@ class Agent(threading.Thread):
 
         def is_enemy(row, col):
             for enemy in self.game.enemy_list:
-                if enemy.gridR == row and enemy.gridC == col:
+                if enemy.gridR == row and enemy.gridC == col and enemy.isActive:
                     return True
             return False
 
@@ -279,10 +279,11 @@ class Agent(threading.Thread):
 
             if goal is None:
                 #print("target: None")
+                print(f"target not found. last node: {node.row}, {node.col}")
                 return None
 
-            # DEGUG: print tanuki's next goal
-            #print(f"target: {node.row}, {node.col}")
+            # DEBUG: print tanuki's next goal
+            print(f"target: {node.row}, {node.col}")
 
             # backtrack
             while node.parent is not None:
@@ -316,13 +317,16 @@ class Agent(threading.Thread):
             # tanuki got a target/bonus! now we have to mark the cell empty
             self.move_grid[self.tanuki_r][self.tanuki_c] = 1
 
-        if (self.time_limit < 1.5 or self.time_limit > 99.5 or
-            # pause on stage start and stage end
-            not self.game.floor_below_me(self.tanuki_r, self.tanuki_c)):
-            # don't do anything when in mid air
-            return
+        if self.time_limit < 1.5 or self.time_limit > 99.5:
+            # reset states during state transition
+            # prevents tanuki from bugging out when skipping a tage
+            self.previous_move = None
+            return # pause on stage start and stage end
 
-        if is_mid_ladder(self.tanuki_r, self.tanuki_c):
+        if not self.game.floor_below_me(self.tanuki_r, self.tanuki_c):
+            return # don't do anything when in mid air
+
+        """if is_mid_ladder(self.tanuki_r, self.tanuki_c):
             if (self.previous_move == UP and
                 (dist_enemy(self.tanuki_r+1, self.tanuki_c) <= 3)):
                 return # stall on the ladder
@@ -338,7 +342,7 @@ class Agent(threading.Thread):
         if (is_enemy_coming(self.tanuki_r, self.tanuki_c) and
             dist_enemy(self.tanuki_r, self.tanuki_c) <= 8 and
             ladder_path is not None):
-            self.path = ladder_path
+            self.path = ladder_path"""
 
         #if is_enemy_coming(self.tanuki_r, self.tanuki_c):
             # if the enemy coming towards here, check if it is close
@@ -352,104 +356,79 @@ class Agent(threading.Thread):
                     #print(self.path)
 
         if not self.path:
-            # if the enemy is not coming towards us
             astar = astar_search(self.tanuki_r, self.tanuki_c)
             if astar is not None:
                 goal_r, goal_c, self.path = astar
-                #print("Finding target")
 
         # don't do anything if for some reason A* star doesn't find a path
 
         #print(f"path = {self.path}: ")
         #print('location = ', self.tanuki_r, self.tanuki_c)
 
-        if not self.path:
-            return None
+        #############################################################
+        # Translate path to keystrokes                              #
+        #############################################################
 
         if self.previous_move == None:
             self.previous_move = LEFT
+
+        if not self.path:
+            print("No next move to follow.")
+            return
+
         next_move = self.path.pop()
-        #print('next move = ', end=' ')
-        #print(next_move)
-        #print('previous move = ', end=' ')
-        #print(self.previous_move)
 
         if next_move is UP:
+            self.previous_jump = False
             self.game.on_key_press(arcade.key.UP, None)
-            if self.previous_move != next_move:
-
-
-            if self.previous_move != next_move:
-                if self.previous_move != DOWN:
-                    self.game.on_key_press(arcade.key.UP, None)
-                    self.game.on_key_press(arcade.key.UP, None)
-                    self.previous_jump = False
-            else:
+            if self.previous_move != DOWN:
+                # tanuki turned on the last move, need to move now
                 self.game.on_key_press(arcade.key.UP, None)
-                self.previous_jump = False
-                #print('UP')
         elif next_move is DOWN:
-            if self.previous_move != next_move:
-                if self.previous_move != UP:
-                    self.game.on_key_press(arcade.key.DOWN, None)
-                    self.game.on_key_press(arcade.key.DOWN, None)
-                    self.previous_jump = False
-                    #print("DOWN DOWN")
-            else:
+            self.previous_jump = False
+            self.game.on_key_press(arcade.key.DOWN, None)
+            if self.previous_move != UP:
+                # tanuki turned on the last move, need to move now
                 self.game.on_key_press(arcade.key.DOWN, None)
-                self.previous_jump = False
-                #print('DOWN')
-
         elif next_move is LEFT:
             if not within_bounds(self.tanuki_r, self.tanuki_c-1):
                 return
-            if self.move_grid[self.tanuki_r][self.tanuki_c-1] == 7 or not self.game.floor_below_me(self.tanuki_r, self.tanuki_c-1):
+            if (self.move_grid[self.tanuki_r][self.tanuki_c-1] == 7 or
+                not self.game.floor_below_me(self.tanuki_r, self.tanuki_c-1)):
+                # tanuki needs to jump
+                self.previous_jump = True
                 if self.previous_move == UP or self.previous_move == DOWN or self.previous_jump == True:
+                    # tanuki needs to turn first
                     self.game.on_key_press(arcade.key.LEFT, None)
-                    self.game.on_key_press(arcade.key.SPACE, None)
-                    #print("LEFT SPACE")
-                    self.previous_jump = True
-                    self.path.pop()
-                else:
-                    self.game.on_key_press(arcade.key.SPACE, None)
-                    #print("SPACE")
-                    self.previous_jump = True
-                    self.path.pop()
+                self.game.on_key_press(arcade.key.SPACE, None)
+                self.path.pop() # jumping makes tanuki travel an extra cell so we need to pop an extra move
             else:
+                self.previous_jump = False
+                self.game.on_key_press(arcade.key.LEFT, None)
                 if self.previous_move != next_move:
+                    # tanuki turned on the last move, need to move now
                     self.game.on_key_press(arcade.key.LEFT, None)
-                    self.game.on_key_press(arcade.key.LEFT, None)
-                    self.previous_jump = False
-                    #print("LEFT LEFT")
-                else:
-                    self.game.on_key_press(arcade.key.LEFT, None)
-                    self.previous_jump = False
-                    #print('LEFT')
-
         elif next_move is RIGHT:
             if not within_bounds(self.tanuki_r, self.tanuki_c+1):
                 return
-            if self.move_grid[self.tanuki_r][self.tanuki_c+1] == 7 or not self.game.floor_below_me(self.tanuki_r, self.tanuki_c+1):
+            if (self.move_grid[self.tanuki_r][self.tanuki_c+1] == 7 or
+                not self.game.floor_below_me(self.tanuki_r, self.tanuki_c+1)):
+                # tanuki needs to jump
+                self.previous_jump = True
                 if self.previous_move == UP or self.previous_move == DOWN or self.previous_jump == True:
+                    # tanuki needs to turn first
                     self.game.on_key_press(arcade.key.RIGHT, None)
-                    self.game.on_key_press(arcade.key.SPACE, None)
-                    #print('RIGHT SPACE')
-                    self.previous_jump = True
-                    self.path.pop()
-                else:
-                    self.game.on_key_press(arcade.key.SPACE, None)
-                    #print('SPACE')
-                    self.previous_jump = True
-                    self.path.pop()
+                self.game.on_key_press(arcade.key.SPACE, None)
+                self.path.pop() # jumping makes tanuki travel an extra cell so we need to pop an extra move
             else:
+                self.previous_jump = False
+                self.game.on_key_press(arcade.key.RIGHT, None)
                 if self.previous_move != next_move:
+                    # tanuki turned on the last move, need to move now
                     self.game.on_key_press(arcade.key.RIGHT, None)
-                    self.game.on_key_press(arcade.key.RIGHT, None)
-                    #print('RIGHT RIGHT')
-                else:
-                    self.game.on_key_press(arcade.key.RIGHT, None)
-                    self.previous_jump = False
-                    #print("RIGHT")
+
+        # update the previous move
+        # used to detect if tanuki is turning
         self.previous_move = next_move
 
         return
