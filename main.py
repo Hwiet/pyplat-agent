@@ -151,11 +151,11 @@ class Agent(threading.Thread):
 
             Note: Changed from dist_enemy() which returned a distance from an enemy.
             """
-            enemy_q = PriorityQueue(lambda enemy: enemy.gridC)
+            enemy_list = []
             for enemy in self.game.enemy_list:
                 if enemy.gridR == row and enemy.isActive:
-                    enemy_q.push(enemy)
-            return [q_item[1] for q_item in enemy_q.heap]
+                    enemy_list.append(enemy)
+            return sorted(enemy_list, key=lambda enemy: enemy.gridC)
 
 
         def is_enemy_coming(enemy, row=self.tanuki_r, col=self.tanuki_c):
