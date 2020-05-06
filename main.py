@@ -52,7 +52,7 @@ class Agent(threading.Thread):
         self.path = []
         self.next_goal = None
         self.searches = 0
-        self.going_for_ladder = False
+        self.avoid_mode = False
 
     def ai_function(self):
 
@@ -171,18 +171,21 @@ class Agent(threading.Thread):
             there was an enemy coming toward this cell."""
             return (enemy.gridR == row and
                 ((col <= enemy.gridC and enemy.isGoingLeft) or
-                (enemy.gridC <= col and not enemy.isGoingLeft)))
+                (enemy.gridC <= col and not enemy.isGoingLeft) or
+                col == enemy.gridC))
 
 
-        def astar_search(row=self.tanuki_r, col=self.tanuki_c, is_terminal=is_goal):
+        def astar_search(row=self.tanuki_r, col=self.tanuki_c, is_terminal=is_goal, wall=lambda row, col:False):
             """Returns the goal coordinate and a sequence of directions from this cell to the goal
             which you can use pop() to retrieve one at a one.
 
             Args:
                 row (int): The row of this cell.
                 col (int): The column of this cell.
-                is_terminal (func): A function with required parameters (row, col) to specify a
-                    check if it is a terminal node.
+                is_terminal (func): (optional) A function with required parameters (row, col) to
+                    specify a check if it is a terminal node.
+                wall (func): (optional) additional cells to declare as walls. Then the path returned will not
+                    go through these walls.
 
             Returns:
                 tuple (int, int, list): The row and column of the goal cell and list of actions.
@@ -224,8 +227,7 @@ class Agent(threading.Thread):
                     if self.move_grid[cur_row][cur_col] != 6:
                         return None # abort, no node exists in this direction
                     while self.move_grid[cur_row][cur_col] == 6:
-                        if not within_bounds(cur_row-1, cur_col):# or
-                            #at_enemy(cur_row-1, cur_col)):
+                        if not within_bounds(cur_row-1, cur_col) or wall(cur_row-1, cur_col):
                             return None # abort, no node exists in this direction
                         cur_row -= 1
                         if at_node(cur_row, cur_col):
@@ -236,8 +238,7 @@ class Agent(threading.Thread):
                     if not within_bounds(cur_row+1, cur_col) or self.move_grid[cur_row+1][cur_col] != 6:
                         return None # abort, no node exists in this direction
                     while self.move_grid[cur_row+1][cur_col] == 6:
-                        if not within_bounds(cur_row+1, cur_col):# or
-                            #at_enemy(cur_row+1, cur_col)):
+                        if not within_bounds(cur_row+1, cur_col) or wall(cur_row+1, cur_col):
                             return None # abort, no node exists in this direction
                         cur_row += 1
                         if at_node(cur_row, cur_col):
@@ -251,8 +252,8 @@ class Agent(threading.Thread):
                         # can go left if there is no floor beneath the left cell but the left cell has floors on both sides
                         try:
                             if ((self.move_grid[cur_row][cur_col-1] == 7 and not self.game.floor_below_me(cur_row, cur_col-2)) or
-                                (self.move_grid[cur_row][cur_col-2] == 7 and not self.game.floor_below_me(cur_row, cur_col-1))):# or
-                                #(at_enemy(cur_row, cur_col-1))):
+                                (self.move_grid[cur_row][cur_col-2] == 7 and not self.game.floor_below_me(cur_row, cur_col-1)) or
+                                wall(cur_row, cur_col-1)):
                                 return None
                         except:
                             return None # abort, no node exists in this direction
@@ -267,8 +268,8 @@ class Agent(threading.Thread):
                         # can go right if there is no floor beneath the right cell but the left cell has floors on both sides
                         try:
                             if ((self.move_grid[cur_row][cur_col+1] == 7 and not self.game.floor_below_me(cur_row, cur_col+2)) or
-                                (self.move_grid[cur_row][cur_col+2] == 7 and not self.game.floor_below_me(cur_row, cur_col+1))):# or
-                                #(at_enemy(cur_row, cur_col+1))):
+                                (self.move_grid[cur_row][cur_col+2] == 7 and not self.game.floor_below_me(cur_row, cur_col+1)) or
+                                wall(cur_row, cur_col+1)):
                                 return None
                         except:
                             return None # abort, no node exists in this direction
@@ -318,12 +319,11 @@ class Agent(threading.Thread):
                             frontier.push(child)
 
             if goal is None:
-                #print("target: None")
                 #print(f"target not found. last node: {node.row}, {node.col}")
                 return None
 
             # DEBUG: print tanuki's next goal
-            #print(f"target: {node.row}, {node.col}")
+            print(f"target: {node.row}, {node.col}")
 
             # backtrack
             while node.parent is not None:
@@ -353,6 +353,8 @@ class Agent(threading.Thread):
         ladder_path = None
         self.path = None
 
+        print(f"pos: {self.tanuki_r}, {self.tanuki_c}")
+
         enemies_in_this_row = enemies_in_row()
         # enemies_in_this_row[0] is the closest enemy
 
@@ -363,25 +365,32 @@ class Agent(threading.Thread):
         if self.time_limit < 1.5 or self.time_limit > 99.5:
             # reset states during state transition
             # prevents tanuki from bugging out when skipping a tage
+            self.avoid_mode = False
             self.previous_move = None
             return # pause on stage start and stage end
 
         if not self.game.floor_below_me(self.tanuki_r, self.tanuki_c):
             return # don't do anything when in mid air
 
-        astar = astar_search(self.tanuki_r, self.tanuki_c, is_mid_ladder)
+        astar = astar_search(self.tanuki_r, self.tanuki_c, is_mid_ladder)#, lambda row, col: at_enemy(row, col))
         if astar is not None:
             goal_r, goal_c, ladder_path = astar
             dist_ladder = abs(goal_c - self.tanuki_c)
 
         if enemies_in_this_row:
             if (is_enemy_coming(enemies_in_this_row[0]) and
-                abs(self.tanuki_c - enemies_in_this_row[0].gridC) <= 2 * dist_ladder + 1 and
+                abs(self.tanuki_c - enemies_in_this_row[0].gridC) <= 5 and
                 ladder_path is not None):
+                self.avoid_mode = True
                 self.path = ladder_path
             elif (not is_enemy_coming(enemies_in_this_row[0]) and
                 abs(self.tanuki_c - enemies_in_this_row[0].gridC) <= 4):
+                self.avoid_mode = False
                 return # stalk the enemy's back
+            else:
+                self.avoid_mode = False
+        else:
+            self.avoid_mode = False
 
         if not self.path:
             astar = astar_search(self.tanuki_r, self.tanuki_c)
@@ -401,18 +410,21 @@ class Agent(threading.Thread):
             return
 
         if is_mid_ladder(self.tanuki_r, self.tanuki_c):
+            self.avoid_mode = False
             enemies_in_row_above = enemies_in_row(self.tanuki_r-1)
             enemies_in_row_below = enemies_in_row(self.tanuki_r+1)
-            if (enemies_in_row_above and
-                self.path[len(self.path)-1] == UP and
-                is_enemy_coming(enemies_in_row_above[0], self.tanuki_r-1) and
-                abs(self.tanuki_c - enemies_in_row_above[0].gridC) <= 1):
-                return # stall on the ladder
-            if (enemies_in_row_below and
-                self.path[len(self.path)-1] == DOWN and
-                is_enemy_coming(enemies_in_row_below[0], self.tanuki_r+1) and
-                abs(self.tanuki_c - enemies_in_row_below[0].gridC) <= 1):
-                return # stall on the ladder
+            for i in range(len(enemies_in_row_above)):
+                if (enemies_in_row_above and
+                    self.path[len(self.path)-1] == UP and
+                    is_enemy_coming(enemies_in_row_above[i], self.tanuki_r-1) and
+                    abs(self.tanuki_c - enemies_in_row_above[i].gridC) <= 5):
+                    return # stall on the ladder
+            for i in range(len(enemies_in_row_below)):
+                if (enemies_in_row_below and
+                    self.path[len(self.path)-1] == DOWN and
+                    is_enemy_coming(enemies_in_row_below[i], self.tanuki_r+1) and
+                    abs(self.tanuki_c - enemies_in_row_below[i].gridC) <= 5):
+                    return # stall on the ladder
 
         next_move = self.path.pop()
 
