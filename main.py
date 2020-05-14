@@ -49,6 +49,11 @@ class Agent(threading.Thread):
         self.next_goal = None
         self.searches = 0
         self.going_for_ladder = False
+        self.path_grid = []
+        for row in range(ROW_COUNT):
+            self.path_grid.append([])
+            for col in range(COL_COUNT):
+                self.path_grid[row].append(False)
 
     def ai_function(self):
 
@@ -275,30 +280,40 @@ class Agent(threading.Thread):
                             del frontier[child]
                             frontier.push(child)
 
+            # prepare path_grid
+            for row in range(ROW_COUNT):
+                for col in range(COL_COUNT):
+                    self.path_grid[row][col] = False
+
             if goal is None:
                 #print("target: None")
                 #print(f"target not found. last node: {node.row}, {node.col}")
                 return None
 
             # DEBUG: print tanuki's next goal
-            #print(f"target: {node.row}, {node.col}")
+            print(f"target: {node.row}, {node.col}")
 
             # backtrack
             while node.parent is not None:
+                self.path_grid[node.row][node.col] = True
                 if node.row == node.parent.row:
                     if node.col < node.parent.col:
-                        for i in range(abs(node.col - node.parent.col)):
+                        for i in range(node.col, node.parent.col):
                             path.append(LEFT)
+                            self.path_grid[node.row][i] = True
                     else:
-                        for i in range(abs(node.col - node.parent.col)):
+                        for i in range(node.col, node.parent.col, -1):
                             path.append(RIGHT)
+                            self.path_grid[node.row][i] = True
                 elif node.col == node.parent.col:
                     if node.row < node.parent.row:
-                        for i in range(abs(node.row - node.parent.row)):
+                        for i in range(node.row, node.parent.row):
                             path.append(UP)
+                            self.path_grid[i][node.col] = True
                     else:
-                        for i in range(abs(node.row - node.parent.row)):
+                        for i in range(node.row, node.parent.row, -1):
                             path.append(DOWN)
+                            self.path_grid[i][node.col] = True
                 node = node.parent
 
             return (goal.row, goal.col, path)
@@ -468,6 +483,8 @@ class Agent(threading.Thread):
                     for col in range(20, 40):
                         if self.kill_grid[row][col-20]:
                             arr[col, row] = (255, 0, 0)
+                        elif self.path_grid[row][col-20]:
+                            arr[col, row] = (47, 255, 0)
                         else:
                             arr[col, row] = (255, 255, 255)
 
